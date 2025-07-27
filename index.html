@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en" data-version="2.0">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Field Data Capture</title>
+
+    <link rel="manifest" href="manifest.json">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.19.3/package/dist/xlsx.full.min.js"></script>
+
+    <style>
+        :root {
+            --primary-color: #007bff;
+            --secondary-color: #6c757d;
+            --success-color: #198754;
+            --danger-color: #dc3545;
+            --warning-color: #ffc107;
+            --light-gray: #f8f9fa;
+            --white: #fff;
+            --text-color: #333;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            padding: 1rem;
+            background: var(--light-gray);
+            color: var(--text-color);
+            -webkit-tap-highlight-color: transparent;
+        }
+        h1 { text-align: center; color: var(--text-color); margin-bottom: 1.5rem; }
+        form {
+            background: var(--white);
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            display: grid;
+            gap: 1.25rem;
+            grid-template-columns: 1fr;
+            max-width: 900px;
+            margin: auto;
+            margin-bottom: 2rem;
+        }
+        @media (min-width: 600px) { form { grid-template-columns: 1fr 1fr; } }
+        .field { display: flex; flex-direction: column; }
+        label { margin-bottom: 0.3rem; font-weight: bold; }
+        input, select, textarea {
+            padding: 0.6rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 1rem;
+            width: 100%;
+            box-sizing: border-box;
+            transition: border-color 0.2s ease;
+        }
+        input:focus, select:focus, textarea:focus { border-color: var(--primary-color); outline: none; }
+        input[readonly] { background-color: #e9e9e9; cursor: not-allowed; }
+        .actions {
+            grid-column: 1 / -1;
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            justify-content: flex-start;
+            margin-top: 1rem;
+        }
+        button {
+            flex: 1 1 auto;
+            min-width: 120px;
+            border: none;
+            border-radius: 5px;
+            color: var(--white);
+            padding: 0.75rem 1rem;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        button:hover { opacity: 0.85; transform: translateY(-1px); }
+        button:active { transform: translateY(0); box-shadow: none; }
+        button:disabled { background-color: #aaa; cursor: not-allowed; }
+        #submitBtn { background: var(--primary-color); }
+        #gpsBtn, #cancelEditBtn, #viewDataBtn, #syncBtn { background: var(--secondary-color); }
+        #pdfBtn, #exportBtn { background: var(--success-color); }
+        #clearDataBtn { background: var(--danger-color); }
+        .edit-btn { background: var(--warning-color); color: #000; padding: 4px 10px; font-size: 0.8rem; border-radius: 3px; }
+        
+        #message {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            color: var(--white); padding: 10px 20px; border-radius: 5px; z-index: 1000;
+            opacity: 0; transition: opacity 0.3s ease-in-out; pointer-events: none;
+        }
+        #message.show { opacity: 1; }
+        
+        #savedDataSection {
+            background: var(--white); padding: 1rem; border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,.1); max-width: 900px;
+            margin: auto; margin-top: 2rem; display: none;
+        }
+        #savedDataSection.visible { display: block; }
+        #savedDataTableContainer { overflow-x: auto; }
+        #savedDataTable { width: 100%; border-collapse: collapse; }
+        #savedDataTable th, #savedDataTable td { border: 1px solid #ddd; padding: 8px; text-align: left; white-space: nowrap; }
+        #savedDataTable th { background-color: var(--light-gray); }
+
+        footer { text-align: center; margin-top: 2rem; color: #888; font-size: 0.9rem; }
+        #loginOverlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.8);
+            display: flex; justify-content: center; align-items: center; z-index: 2000; backdrop-filter: blur(5px);
+        }
+        #loginBox { background: var(--white); padding: 2rem; border-radius: 8px; text-align: center; }
+    </style>
+</head>
+<body>
+
+    <div id="loginOverlay" style="display: none;">
+        <div id="loginBox">
+            <h2>Enter Access Code</h2>
+            <p>Please enter the code to access the application.</p>
+            <input type="password" id="accessCode" placeholder="Access Code" autocomplete="current-password">
+            <button type="button" id="loginBtn">Login</button>
+            <p id="loginError" style="color: red; display: none; margin-top: 1rem;">Invalid Code</p>
+        </div>
+    </div>
+
+    <h1>Field Data Capture</h1>
+
+    <form id="captureForm">
+        <input type="hidden" id="editRecordId" name="editRecordId">
+        <div class="field"><label for="workorderNo">Workorder No</label><input id="workorderNo" name="workorderNo" type="text" placeholder="Optional"></div>
+        <div class="field"><label for="zone">Zone</label><input id="zone" name="zone" type="text" placeholder="e.g., North"></div>
+        <div class="field"><label for="sector">Sector</label><input id="sector" name="sector" type="text" placeholder="e.g., A"></div>
+        <div class="field"><label for="cnc">CNC</label><input id="cnc" name="cnc" type="text"></div>
+        <div class="field"><label for="contractorName">Contractor Name or Source</label><input id="contractorName" name="contractorName" type="text"></div>
+        <div class="field"><label for="date">Date</label><input id="date" type="date" name="date" required></div>
+        <div class="field"><label for="feederName">Feeder Name</label><input id="feederName" name="feederName" type="text"></div>
+        <div class="field"><label for="townshipName">Township Name</label><input id="townshipName" name="townshipName" type="text"></div>
+        <div class="field"><label for="transformerNo">Transformer No</label><input id="transformerNo" name="transformerNo" type="text" required></div>
+        <div class="field"><label for="standNo">Stand No</label><input id="standNo" name="standNo" type="text"></div>
+        <div class="field"><label for="installationNo">Installation No</label><input id="installationNo" name="installationNo" type="text"></div>
+        <div class="field"><label for="lat">Latitude (DD MM SS.SSS S/N)</label><input id="lat" name="latitude" type="text" readonly></div>
+        <div class="field"><label for="lon">Longitude (DD MM SS.SSS E/W)</label><input id="lon" name="longitude" type="text" readonly></div>
+        <div class="field"><label for="access">Access</label><select id="access" name="access"><option value="">— Select —</option><option value="Yes">Yes</option><option value="No">No</option></select></div>
+        <div class="field"><label for="atHome">At Home</label><select id="atHome" name="atHome"><option value="">— Select —</option><option value="Yes">Yes</option><option value="No">No</option></select></div>
+        <div class="field"><label for="connected">Connected</label><select id="connected" name="connected"><option value="">— Select —</option><option value="Yes">Yes</option><option value="No">No</option></select></div>
+        <div class="field"><label for="abandoned">Abandoned</label><select id="abandoned" name="abandoned"><option value="">— Select —</option><option value="Yes">Yes</option><option value="No">No</option></select></div>
+        <div class="field"><label for="vandalised">Vandalised</label><select id="vandalised" name="vandalised"><option value="">— Select —</option><option value="Yes">Yes</option><option value="No">No</option></select></div>
+        <div class="field"><label for="illegal">Illegal</label><select id="illegal" name="illegal"><option value="">— Select —</option><option value="Yes">Yes</option><option value="No">No</option></select></div>
+        <div class="field"><label for="owner">Owner</label><select id="owner" name="owner"><option value="">— Select —</option><option value="Yes">Yes</option><option value="No">No</option></select></div>
+        <div class="field"><label for="surname">Surname</label><input id="surname" name="surname" type="text"></div>
+        <div class="field"><label for="name">Name</label><input id="name" name="name" type="text"></div>
+        <div class="field"><label for="idNo">ID No</label><input id="idNo" name="idNo" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="e.g., 8501015000087"></div>
+        <div class="field"><label for="phoneCode">Phone Code</label><input id="phoneCode" name="phoneCode" type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="e.g., +27"></div>
+        <div class="field"><label for="phoneNo">Phone No</label><input id="phoneNo" name="phoneNo" type="tel" inputmode="tel" placeholder="e.g., 821234567"></div>
+        <div class="field"><label for="normalVendor">Normal Vendor</label><select id="normalVendor" name="normalVendor"><option value="">— Select —</option><option value="Yes">Yes</option><option value="No">No</option></select></div>
+        <div class="field"><label for="recentVendor">Most Recent Vendor</label><input id="recentVendor" name="recentVendor" type="text"></div>
+        <div class="field"><label for="meterNo">Meter No</label><input id="meterNo" name="meterNo" type="text"></div>
+        <div class="field"><label for="split">Split</label><select id="split" name="split"><option value="">— Select —</option><option value="Yes">Yes</option><option value="No">No</option></select></div>
+        <div class="field"><label for="commonBaseMeter">Common/Non Common Base Meter</label><input id="commonBaseMeter" name="commonBaseMeter" type="text"></div>
+        <div class="field"><label for="edEcu">ED/ECU</label><input id="edEcu" name="edEcu" type="text"></div>
+        <div class="field"><label for="meterType">Meter Type</label><input id="meterType" name="meterType" type="text"></div>
+        <div class="field"><label for="tariffCode">Tariff Code</label><input id="tariffCode" name="tariffCode" type="text"></div>
+        <div class="field"><label for="ampLimit">Amp Limit</label><input id="ampLimit" name="ampLimit" type="number" inputmode="numeric" pattern="[0-9]*"></div>
+        <div class="field"><label for="supplyGroupCode">Supply Group Code</label><input id="supplyGroupCode" name="supplyGroupCode" type="text"></div>
+        <div class="field"><label for="magCard">Mag Card/Keypad</label><input id="magCard" name="magCard" type="text"></div>
+        <div class="field"><label for="stsOrProp">STS or Prop</label><input id="stsOrProp" name="stsOrProp" type="text"></div>
+        <div class="field"><label for="tampered">Tampered</label><select id="tampered" name="tampered"><option value="">— Select —</option><option value="Yes">Yes</option><option value="No">No</option></select></div>
+        <div class="field"><label for="tamperMethod">Tamper Method</label><input id="tamperMethod" name="tamperMethod" type="text"></div>
+        <div class="field"><label for="removed">Removed</label><select id="removed" name="removed"><option value="">— Select —</option><option value="Yes">Yes</option><option value="No">No</option></select></div>
+        <div class="field"><label for="tamperNotNo">Tamper Not No</label><input id="tamperNotNo" name="tamperNotNo" type="text"></div>
+        <div class="field"><label for="cardTrip">Card Trip</label><select id="cardTrip" name="cardTrip"><option value="">— Select —</option><option value="Pass">Pass</option><option value="Fail">Fail</option></select></div>
+        <div class="field"><label for="elTest">E/L Test</label><select id="elTest" name="elTest"><option value="">— Select —</option><option value="Pass">Pass</option><option value="Fail">Fail</option></select></div>
+        <div class="field"><label for="meterFaulty">Meter Faulty</label><select id="meterFaulty" name="meterFaulty"><option value="">— Select —</option><option value="Yes">Yes</option><option value="No">No</option></select></div>
+        <div class="field"><label for="replaced">Replaced</label><select id="replaced" name="replaced"><option value="">— Select —</option><option value="Yes">Yes</option><option value="No">No</option></select></div>
+        <div class="field"><label for="mmfNo">MMF No</label><input id="mmfNo" name="mmfNo" type="text"></div>
+        <div class="field"><label for="newMeterNo">New Meter No</label><input id="newMeterNo" name="newMeterNo" type="text"></div>
+        <div class="field"><label for="newMeterType">New Meter Type</label><input id="newMeterType" name="newMeterType" type="text"></div>
+        <div class="field"><label for="newMeterAmpLimit">New Meter Amp Limit</label><input id="newMeterAmpLimit" name="newMeterAmpLimit" type="number" inputmode="numeric" pattern="[0-9]*"></div>
+        <div class="field"><label for="newMeterCardTrip">New Meter Card Trip</label><select id="newMeterCardTrip" name="newMeterCardTrip"><option value="">— Select —</option><option value="Pass">Pass</option><option value="Fail">Fail</option></select></div>
+        <div class="field"><label for="newMeterElTest">New Meter E/L Test</label><select id="newMeterElTest" name="newMeterElTest"><option value="">— Select —</option><option value="Pass">Pass</option><option value="Fail">Fail</option></select></div>
+        <div class="field"><label for="sealed">Sealed</label><select id="sealed" name="sealed"><option value="">— Select —</option><option value="Yes">Yes</option><option value="No">No</option></select></div>
+        <div class="field"><label for="sealNo">Seal No</label><input id="sealNo" name="sealNo" type="text"></div>
+        <div class="field"><label for="remarks">Remarks</label><textarea id="remarks" name="remarks"></textarea></div>
+
+        <div class="actions">
+            <button type="button" id="submitBtn">Save Data</button>
+            <button type="button" id="cancelEditBtn" style="display: none;">Cancel Edit</button>
+            <button type="button" id="gpsBtn">Get GPS</button>
+            <button type="button" id="viewDataBtn">View Data</button>
+            <button type="button" id="pdfBtn">Download PDF</button>
+            <button type="button" id="exportBtn">Download Excel</button>
+            <button type="button" id="syncBtn">Sync Data</button>
+        </div>
+    </form>
+
+    <div id="message" role="alert" aria-live="polite"></div>
+
+    <div id="savedDataSection">
+        <h2>Saved Field Entries</h2>
+        <div id="savedDataTableContainer">
+            <table id="savedDataTable">
+                <thead><tr id="savedTableHeader"></tr></thead>
+                <tbody id="savedTableBody"></tbody>
+            </table>
+        </div>
+        <div class="actions">
+            <button type="button" id="clearDataBtn">Clear All Data</button>
+            <button type="button" id="closeViewDataBtn">Close View</button>
+        </div>
+    </div>
+    
+    <footer id="app-footer"></footer>
+
+    <script>
+    // IIFE to encapsulate the entire script and avoid polluting the global scope
+    (() => {
+        'use strict';
+
+        // --- 1. CONSTANTS AND STATE ---
+        const
+            DB_NAME = 'FieldDataDB',
+            DB_VERSION = 1,
+            STORE_NAME = 'records',
+            ACCESS_CODE = 'PWA2025',
+            VERIFIED_KEY = 'userVerified';
+
+        const formFieldOrder = ['workorderNo','zone','sector','cnc','contractorName','date','feederName','townshipName','transformerNo','standNo','installationNo','latitude','longitude','access','atHome','connected','abandoned','vandalised','illegal','owner','surname','name','idNo','phoneCode','phoneNo','normalVendor','recentVendor','meterNo','split','commonBaseMeter','edEcu','meterType','tariffCode','ampLimit','supplyGroupCode','magCard','stsOrProp','tampered','tamperMethod','removed','tamperNotNo','cardTrip','elTest','meterFaulty','replaced','mmfNo','newMeterNo','newMeterType','newMeterAmpLimit','newMeterCardTrip','newMeterElTest','sealed','sealNo','remarks','createdAt','lastModified'];
+        const headerMap = {'workorderNo':'Workorder No','zone':'Zone','sector':'Sector','cnc':'CNC','contractorName':'Contractor Name','date':'Date','feederName':'Feeder Name','townshipName':'Township Name','transformerNo':'Transformer No','standNo':'Stand No','installationNo':'Installation No','latitude':'Latitude','longitude':'Longitude','access':'Access','atHome':'At Home','connected':'Connected','abandoned':'Abandoned','vandalised':'Vandalised','illegal':'Illegal','owner':'Owner','surname':'Surname','name':'Name','idNo':'ID No','phoneCode':'Phone Code','phoneNo':'Phone No','normalVendor':'Normal Vendor','recentVendor':'Most Recent Vendor','meterNo':'Meter No','split':'Split','commonBaseMeter':'Common/Non Common Base Meter','edEcu':'ED/ECU','meterType':'Meter Type','tariffCode':'Tariff Code','ampLimit':'Amp Limit','supplyGroupCode':'Supply Group Code','magCard':'Mag Card/Keypad','stsOrProp':'STS or Prop','tampered':'Tampered','tamperMethod':'Tamper Method','removed':'Removed','tamperNotNo':'Tamper Not No','cardTrip':'Card Trip','elTest':'E/L Test','meterFaulty':'Meter Faulty','replaced':'Replaced','mmfNo':'MMF No','newMeterNo':'New Meter No','newMeterType':'New Meter Type','newMeterAmpLimit':'New Meter Amp Limit','newMeterCardTrip':'New Meter Card Trip','newMeterElTest':'New Meter E/L Test','sealed':'Sealed','sealNo':'Seal No','remarks':'Remarks','createdAt':'Created At','lastModified':'Last Modified'};
+
+        let db; // To hold the database instance
+
+        // --- 2. DOM ELEMENT REFERENCES ---
+        const
+            form = document.getElementById('captureForm'),
+            submitBtn = document.getElementById('submitBtn'),
+            cancelEditBtn = document.getElementById('cancelEditBtn'),
+            editRecordIdInput = document.getElementById('editRecordId'),
+            messageElement = document.getElementById('message'),
+            savedDataSection = document.getElementById('savedDataSection'),
+            savedDataTableBody = document.getElementById('savedTableBody'),
+            savedDataTableHeader = document.getElementById('savedTableHeader'),
+            loginOverlay = document.getElementById('loginOverlay');
+
+        // --- 3. DATABASE FUNCTIONS ---
+
+        /**
+         * Initializes the IndexedDB database.
+         * @returns {Promise<IDBDatabase>} A promise that resolves with the database instance.
+         */
+        async function initDb() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+                request.onupgradeneeded = e => e.target.result.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+                request.onsuccess = e => { db = e.target.result; resolve(db); };
+                request.onerror = e => reject(e.target.error);
+            });
+        }
+        
+        const dbRequest = (type, operation) => new Promise((resolve, reject) => {
+            if (!db) return reject(new Error("Database not initialized."));
+            const tx = db.transaction(STORE_NAME, type);
+            tx.oncomplete = () => resolve();
+            tx.onerror = e => reject(e.target.error);
+            operation(tx.objectStore(STORE_NAME));
+        });
+
+        const addRecord = (record) => dbRequest('readwrite', store => store.add(record));
+        const updateRecord = (record) => dbRequest('readwrite', store => store.put(record));
+        const clearAllRecords = () => dbRequest('readwrite', store => store.clear());
+        
+        const getAllRecords = () => new Promise((resolve, reject) => {
+            if (!db) return reject(new Error("Database not initialized."));
+            const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).getAll();
+            request.onsuccess = e => resolve(e.target.result);
+            request.onerror = e => reject(e.target.error);
+        });
+
+        const getRecordById = (id) => new Promise((resolve, reject) => {
+            if (!db) return reject(new Error("Database not initialized."));
+            const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(id);
+            request.onsuccess = e => resolve(e.target.result);
+            request.onerror = e => reject(e.target.error);
+        });
+
+        // --- 4. UI & UTILITY FUNCTIONS ---
+
+        /**
+         * Displays a temporary message to the user.
+         * @param {string} msg - The message to display.
+         * @param {'info'|'success'|'error'} type - The type of message.
+         * @param {number} [duration=3000] - How long to display the message in ms.
+         */
+        function showMessage(msg, type = 'info', duration = 3000) {
+            const colors = { info: '#6c757d', success: '#198754', error: '#dc3545' };
+            messageElement.textContent = msg;
+            messageElement.style.backgroundColor = colors[type];
+            messageElement.classList.add('show');
+            setTimeout(() => messageElement.classList.remove('show'), duration);
+        }
+        
+        /**
+         * Sets a button to a loading or normal state.
+         * @param {HTMLButtonElement} button - The button element.
+         * @param {boolean} isLoading - True to set to loading state, false for normal.
+         * @param {string} [loadingText='Loading...'] - The text to display while loading.
+         */
+        function setButtonLoadingState(button, isLoading, loadingText = 'Loading...') {
+            if (isLoading) {
+                button.dataset.originalText = button.textContent;
+                button.textContent = loadingText;
+                button.disabled = true;
+            } else {
+                button.textContent = button.dataset.originalText || button.textContent;
+                button.disabled = false;
+            }
+        }
+
+        /**
+         * Updates all form fields that have conditional required logic.
+         */
+        function updateMandatoryFields() {
+            const getVal = id => document.getElementById(id).value;
+            setFieldRequired('idNo', getVal('owner') === 'Yes');
+            const tampered = getVal('tampered') === 'Yes';
+            setFieldRequired('tamperMethod', tampered);
+            setFieldRequired('removed', tampered);
+            const faulty = getVal('meterFaulty') === 'No';
+            setFieldRequired('cardTrip', faulty);
+            setFieldRequired('elTest', faulty);
+            const replaced = getVal('replaced') === 'Yes';
+            setFieldRequired('mmfNo', replaced);
+            setFieldRequired('newMeterNo', replaced);
+            setFieldRequired('newMeterType', replaced);
+            setFieldRequired('newMeterAmpLimit', replaced);
+            const access = getVal('access') === 'Yes' && getVal('atHome') === 'Yes' && getVal('connected') === 'Yes';
+            setFieldRequired('lat', access); setFieldRequired('lon', access); setFieldRequired('phoneNo', access);
+            setFieldRequired('meterNo', access); setFieldRequired('edEcu', access);
+            setFieldRequired('sealNo', getVal('sealed') === 'Yes');
+        }
+        
+        function setFieldRequired(fieldId, isRequired) {
+            const field = document.getElementById(fieldId);
+            const label = document.querySelector(`label[for="${fieldId}"]`);
+            if (!field || !label) return;
+            field.required = isRequired;
+            let indicator = label.querySelector('.required-indicator');
+            if (isRequired && !indicator) {
+                indicator = document.createElement('span');
+                indicator.className = 'required-indicator';
+                indicator.textContent = ' *';
+                indicator.style.color = 'var(--danger-color)';
+                label.appendChild(indicator);
+            } else if (!isRequired && indicator) {
+                label.removeChild(indicator);
+            }
+        }
+
+        /**
+         * Resets the form to its initial state for new data entry.
+         */
+        function resetFormToEntryMode() {
+            form.reset();
+            editRecordIdInput.value = '';
+            submitBtn.textContent = 'Save Data';
+            submitBtn.style.backgroundColor = 'var(--primary-color)';
+            cancelEditBtn.style.display = 'none';
+            document.getElementById('date').valueAsDate = new Date();
+            updateMandatoryFields();
+        }
+
+        // --- 5. INITIALIZATION & EVENT LISTENERS ---
+        
+        /**
+         * Main function to initialize the application.
+         */
+        async function main() {
+            handleLogin();
+            setupEventListeners();
+            
+            try {
+                await initDb();
+                resetFormToEntryMode();
+                updateFooter();
+            } catch (error) {
+                console.error("Database initialization failed:", error);
+                showMessage("Critical Error: Database could not be loaded. App may not function.", "error", 10000);
+                // Disable form if DB fails
+                Array.from(form.elements).forEach(el => el.disabled = true);
+            }
+
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('service-worker.js')
+                    .then(reg => console.log('Service Worker registered.', reg))
+                    .catch(err => console.error('Service Worker registration failed.', err));
+            }
+        }
+
+        /**
+         * Handles the initial login flow.
+         */
+        function handleLogin() {
+            if (localStorage.getItem(VERIFIED_KEY) === 'true') return;
+            loginOverlay.style.display = 'flex';
+            const loginBtn = document.getElementById('loginBtn');
+            const accessCodeInput = document.getElementById('accessCode');
+            const handleLoginAttempt = () => {
+                if (accessCodeInput.value === ACCESS_CODE) {
+                    localStorage.setItem(VERIFIED_KEY, 'true');
+                    loginOverlay.style.display = 'none';
+                } else {
+                    document.getElementById('loginError').style.display = 'block';
+                    accessCodeInput.value = '';
+                    accessCodeInput.focus();
+                }
+            };
+            loginBtn.addEventListener('click', handleLoginAttempt);
+            accessCodeInput.addEventListener('keyup', e => e.key === 'Enter' && handleLoginAttempt());
+        }
+
+        /**
+         * Sets up all event listeners for the application.
+         */
+        function setupEventListeners() {
+            form.addEventListener('submit', handleFormSubmit);
+            ['owner','tampered','meterFaulty','replaced','access','atHome','connected','sealed'].forEach(id => {
+                document.getElementById(id).addEventListener('change', updateMandatoryFields);
+            });
+            document.getElementById('gpsBtn').addEventListener('click', handleGpsRequest);
+            document.getElementById('viewDataBtn').addEventListener('click', handleViewDataToggle);
+            document.getElementById('pdfBtn').addEventListener('click', handlePdfExport);
+            document.getElementById('exportBtn').addEventListener('click', handleExcelExport);
+            document.getElementById('syncBtn').addEventListener('click', () => showMessage('Sync functionality is a work in progress.', 'info'));
+            cancelEditBtn.addEventListener('click', resetFormToEntryMode);
+            savedDataTableBody.addEventListener('click', handleTableClick);
+            document.getElementById('closeViewDataBtn').addEventListener('click', () => savedDataSection.classList.remove('visible'));
+            document.getElementById('clearDataBtn').addEventListener('click', handleClearData);
+        }
+
+        /**
+         * Populates the footer with app version and current date.
+         */
+        function updateFooter() {
+            const version = document.documentElement.dataset.version || "1.0";
+            const today = new Date().toLocaleDateString('en-ZA', { year: 'numeric', month: 'long', day: 'numeric' });
+            document.getElementById('app-footer').textContent = `Version ${version} | ${today}`;
+        }
+        
+        // --- 6. EVENT HANDLER FUNCTIONS ---
+
+        /**
+         * Handles both adding a new record and updating an existing one.
+         * @param {Event} e - The form submission event.
+         */
+        async function handleFormSubmit(e) {
+            e.preventDefault();
+            setButtonLoadingState(submitBtn, true, 'Saving...');
+
+            const editId = editRecordIdInput.value;
+            const formData = new FormData(form);
+            const data = Object.fromEntries(formData.entries());
+            delete data.editRecordId;
+
+            const now = new Date().toISOString();
+            data.lastModified = now;
+
+            if (data.date) data.date = data.date.replace(/-/g, '/');
+
+            try {
+                if (editId) {
+                    data.id = parseInt(editId, 10);
+                    const originalRecord = await getRecordById(data.id);
+                    data.createdAt = originalRecord.createdAt; // Preserve original creation date
+                    await updateRecord(data);
+                    showMessage('Record updated successfully ✔', 'success');
+                } else {
+                    data.createdAt = now;
+                    await addRecord(data);
+                    showMessage('Data saved successfully offline ✔', 'success');
+                }
+                resetFormToEntryMode();
+                if (savedDataSection.classList.contains('visible')) displayData(); // Refresh data view
+            } catch (error) {
+                console.error("Save/Update Error:", error);
+                showMessage(`Failed to save data: ${error.message}`, 'error');
+            } finally {
+                setButtonLoadingState(submitBtn, false);
+            }
+        }
+        
+        /**
+         * Retrieves GPS coordinates and populates the form.
+         */
+        function handleGpsRequest() {
+            if (!navigator.geolocation) return showMessage('Geolocation is not supported by your browser.', 'error');
+            const btn = document.getElementById('gpsBtn');
+            setButtonLoadingState(btn, true, 'Acquiring...');
+            navigator.geolocation.getCurrentPosition(
+                pos => {
+                    document.getElementById('lat').value = toDMS(pos.coords.latitude, 'latitude');
+                    document.getElementById('lon').value = toDMS(pos.coords.longitude, 'longitude');
+                    showMessage('GPS acquired successfully!', 'success');
+                    setButtonLoadingState(btn, false);
+                },
+                err => {
+                    showMessage(`GPS Error: ${err.message}`, 'error');
+                    setButtonLoadingState(btn, false);
+                },
+                { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+            );
+        }
+        
+        /**
+         * Toggles the visibility of the saved data table.
+         */
+        function handleViewDataToggle() {
+            if (savedDataSection.classList.contains('visible')) {
+                savedDataSection.classList.remove('visible');
+            } else {
+                displayData();
+            }
+        }
+        
+        /**
+         * Populates the saved data table with records from the database.
+         */
+        async function displayData() {
+            try {
+                const records = await getAllRecords();
+                if (records.length === 0) {
+                    showMessage('No saved data to display.', 'info');
+                    savedDataSection.classList.remove('visible');
+                    return;
+                }
+                const allKeys = new Set();
+                records.forEach(r => Object.keys(r).forEach(k => k !== 'id' && allKeys.add(k)));
+                const headers = formFieldOrder.filter(key => allKeys.has(key));
+                allKeys.forEach(key => !headers.includes(key) && headers.push(key));
+                
+                savedDataTableHeader.innerHTML = '';
+                savedDataTableBody.innerHTML = '';
+
+                headers.forEach(key => savedDataTableHeader.innerHTML += `<th>${headerMap[key] || key}</th>`);
+                savedDataTableHeader.innerHTML += '<th>Actions</th>';
+
+                records.forEach(record => {
+                    const row = savedDataTableBody.insertRow();
+                    headers.forEach(key => {
+                        let value = record[key] || '';
+                        if (key === 'createdAt' || key === 'lastModified') {
+                           value = new Date(value).toLocaleString('en-ZA');
+                        }
+                        row.insertCell().textContent = value;
+                    });
+                    row.insertCell().innerHTML = `<button class="edit-btn" data-id="${record.id}">Edit</button>`;
+                });
+                savedDataSection.classList.add('visible');
+            } catch (error) {
+                console.error("Display Data Error:", error);
+                showMessage('Failed to load saved data.', 'error');
+            }
+        }
+        
+        /**
+         * Handles clicks within the data table, specifically for the edit button.
+         * @param {Event} e The click event.
+         */
+        async function handleTableClick(e) {
+            if (e.target.classList.contains('edit-btn')) {
+                const recordId = parseInt(e.target.dataset.id, 10);
+                const record = await getRecordById(recordId);
+                if (record) {
+                    for (const key in record) {
+                        if (form.elements[key]) {
+                            form.elements[key].value = (key === 'date') ? record[key].replace(/\//g, '-') : record[key];
+                        }
+                    }
+                    editRecordIdInput.value = record.id;
+                    submitBtn.textContent = 'Update Record';
+                    cancelEditBtn.style.display = 'inline-block';
+                    savedDataSection.classList.remove('visible');
+                    updateMandatoryFields();
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
+            }
+        }
+
+        async function handleClearData() {
+            if (confirm('Are you sure you want to permanently delete ALL saved data? This cannot be undone.')) {
+                try {
+                    await clearAllRecords();
+                    displayData(); // Refresh view (which will now be empty)
+                    showMessage('All saved data has been cleared.', 'success');
+                } catch (error) {
+                    showMessage('Failed to clear data.', 'error');
+                }
+            }
+        }
+
+        async function getOrderedDataForExport() {
+            const records = await getAllRecords();
+            if (records.length === 0) {
+                showMessage('No data available to export.', 'info');
+                return null;
+            }
+            const allKeys = new Set();
+            records.forEach(r => Object.keys(r).forEach(k => k !== 'id' && allKeys.add(k)));
+            const orderedKeys = formFieldOrder.filter(key => allKeys.has(key));
+            allKeys.forEach(key => !orderedKeys.includes(key) && orderedKeys.push(key));
+            return { records, orderedKeys };
+        }
+        
+        async function handlePdfExport() {
+            if (typeof window.jspdf === 'undefined') return showMessage('PDF library not loaded. Check connection.', 'error');
+            if (!confirm("Download all saved data as a PDF file?")) return;
+
+            const exportData = await getOrderedDataForExport();
+            if (!exportData) return;
+            const { records, orderedKeys } = exportData;
+            
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ orientation: 'landscape' });
+            const tableHeaders = orderedKeys.map(key => headerMap[key] || key);
+            const tableBody = records.map(record => orderedKeys.map(key => record[key] || ''));
+            
+            doc.text("Field Data Report", 14, 15);
+            doc.autoTable({
+                head: [tableHeaders], body: tableBody, startY: 20, theme: 'grid',
+                styles: { fontSize: 6, cellPadding: 1.5 },
+                headStyles: { fillColor: [22, 160, 133], fontSize: 6.5 }
+            });
+            doc.save(`Field_Data_Report_${new Date().toISOString().split('T')[0]}.pdf`);
+        }
+        
+        async function handleExcelExport() {
+            if (typeof window.XLSX === 'undefined') return showMessage('Excel library not loaded. Check connection.', 'error');
+            if (!confirm("Download all saved data as an Excel file?")) return;
+            
+            const exportData = await getOrderedDataForExport();
+            if (!exportData) return;
+            const { records, orderedKeys } = exportData;
+            
+            const headers = orderedKeys.map(key => headerMap[key] || key);
+            const dataToSheet = records.map(rec => {
+                const row = {};
+                orderedKeys.forEach(key => row[headerMap[key] || key] = rec[key] || '');
+                return row;
+            });
+            
+            const ws = XLSX.utils.json_to_sheet(dataToSheet, { header: headers });
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'FieldData');
+            XLSX.writeFile(wb, `Field_Data_${new Date().toISOString().split('T')[0]}.xlsx`);
+        }
+
+        // --- START THE APP ---
+        document.addEventListener('DOMContentLoaded', main);
+    })();
+    </script>
+</body>
+</html>
