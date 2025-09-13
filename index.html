@@ -276,8 +276,9 @@
     <div id="passwordModal" class="modal-overlay visible">
         <div class="modal-content">
             <h2>Data Encryption</h2>
-            <p>Enter a password to encrypt and decrypt your data. This password is not stored and is required every session.</p>
+            <p>Enter and re-enter a password to encrypt and decrypt your data. This password is not stored and is required every session.</p>
             <input type="password" id="passwordInput" placeholder="Data Password">
+            <input type="password" id="confirmPasswordInput" placeholder="Confirm Password">
             <div class="modal-actions">
                 <button id="passwordSubmit">Unlock Data</button>
             </div>
@@ -883,6 +884,11 @@
         // --- INITIALIZATION & EVENT LISTENERS ---
         document.getElementById('passwordSubmit').addEventListener('click', async () => {
             const passwordInput = document.getElementById('passwordInput');
+            const confirmPasswordInput = document.getElementById('confirmPasswordInput');
+
+            if (passwordInput.value !== confirmPasswordInput.value) {
+                return showMessage('Passwords do not match.', 'error');
+            }
             if (passwordInput.value.length < 8) {
                 return showMessage('Password must be at least 8 characters.', 'error');
             }
@@ -896,7 +902,7 @@
                 
                 await initDb();
                 setTodaysDate();
-                setCurrentTime(); // Auto-set time on password submission
+                setCurrentTime();
                 updateRequiredVisuals();
                 if (navigator.geolocation) {
                     navigator.geolocation.getCurrentPosition(
@@ -917,6 +923,9 @@
         });
 
         document.getElementById('passwordInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') document.getElementById('passwordSubmit').click();
+        });
+        document.getElementById('confirmPasswordInput').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') document.getElementById('passwordSubmit').click();
         });
 
